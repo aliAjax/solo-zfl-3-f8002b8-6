@@ -1,7 +1,12 @@
 import { create } from 'zustand';
-import type { Bench, BenchExperience, MaterialType, OrientationType, ShadeLevelType, NoiseLevelType, StayDurationType } from '@/types';
+import type { Bench, BenchExperience, MaterialType, OrientationType, ShadeLevelType, NoiseLevelType } from '@/types';
 import { loadBenches, saveBenches } from '@/utils/storage';
 import { generateId } from '@/utils/comfort';
+import {
+  MAX_STORED_SIMULATIONS,
+  SIMULATION_STEP_MINUTES,
+  simulateBenchSunlight,
+} from '@/utils/sunlight';
 import { mockBenches } from '@/data/mockBenches';
 
 interface BenchState {
@@ -22,7 +27,7 @@ interface BenchActions {
   setShadeFilter: (shade: ShadeLevelType | null) => void;
   setNoiseFilter: (noise: NoiseLevelType | null) => void;
   clearFilters: () => void;
-  addBench: (bench: Omit<Bench, 'id' | 'createdAt' | 'updatedAt' | 'experiences'>) => void;
+  addBench: (bench: Omit<Bench, 'id' | 'createdAt' | 'updatedAt' | 'experiences' | 'sunlightSimulations'>) => void;
   updateBench: (id: string, updates: Partial<Bench>) => void;
   deleteBench: (id: string) => void;
   getBenchById: (id: string) => Bench | undefined;
@@ -30,6 +35,10 @@ interface BenchActions {
   updateExperience: (benchId: string, expId: string, updates: Partial<BenchExperience>) => void;
   deleteExperience: (benchId: string, expId: string) => void;
   getFilteredBenches: () => Bench[];
+  /** 批量推演：对全部长椅按选定日期做日照推演，结果随档案保存 */
+  runSunlightSimulation: (date: string, stepMinutes?: number) => void;
+  /** 清空全部长椅的日照推演结果 */
+  clearSunlightSimulations: () => void;
 }
 
 const initialState: BenchState = {
@@ -75,6 +84,7 @@ export const useBenchStore = create<BenchState & BenchActions>((set, get) => ({
       ...benchData,
       id: generateId(),
       experiences: [],
+      sunlightSimulations: [],
       createdAt: now,
       updatedAt: now,
     };
@@ -154,7 +164,7 @@ export const useBenchStore = create<BenchState & BenchActions>((set, get) => ({
 
   getFilteredBenches: () => {
     const { benches, searchQuery, materialFilter, orientationFilter, shadeFilter, noiseFilter } = get();
-    
+
     return benches.filter((bench) => {
       if (searchQuery) {
         const query = searchQuery.toLowerCase();
@@ -163,13 +173,36 @@ export const useBenchStore = create<BenchState & BenchActions>((set, get) => ({
         const matchReview = bench.review.toLowerCase().includes(query);
         if (!matchName && !matchLocation && !matchReview) return false;
       }
-      
+
       if (materialFilter && bench.material !== materialFilter) return false;
       if (orientationFilter && bench.orientation !== orientationFilter) return false;
       if (shadeFilter && bench.shadeLevel !== shadeFilter) return false;
       if (noiseFilter && bench.noiseLevel !== noiseFilter) return false;
-      
+
       return true;
     });
+  },
+
+  runSunlightSimulation: (date, stepMinutes = SIMULATION_STEP_MINUTES) => {
+    const newBenches = get().benches.map((bench) => {
+      const sim = simulateBenchSunlight(bench, date, stepMinutes);
+      // 同日期的新结果替换旧结果；指纹不同（资料已变动）的旧结果自然失效
+      const rest = bench.sunlightSimulations.filter((s) => s.date !== date);
+      return {
+        ...bench,
+        sunlightSimulations: [sim, ...rest].slice(0, MAX_STORED_SIMULATIONS),
+      };
+    });
+    set({ benches: newBenches });
+    saveBenches(newBenches);
+  },
+
+  clearSunlightSimulations: () => {
+    const newBenches = get().benches.map((bench) => ({
+      ...bench,
+      sunlightSimulations: [],
+    }));
+    set({ benches: newBenches });
+    saveBenches(newBenches);
   },
 }));

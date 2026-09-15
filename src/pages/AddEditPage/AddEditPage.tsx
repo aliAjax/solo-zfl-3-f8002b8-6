@@ -10,6 +10,8 @@ import {
   Sunset,
   Moon,
   CloudSun,
+  Mountain,
+  AlertTriangle,
 } from 'lucide-react';
 import { useBenchStore } from '@/store/useBenchStore';
 import {
@@ -28,9 +30,54 @@ import type {
   StayDurationType,
   TimePeriodType,
   BenchExperience,
+  Obstruction,
 } from '@/types';
 import Rating from '@/components/Rating/Rating';
 import { generateId } from '@/utils/comfort';
+import {
+  DEFAULT_TIMEZONE,
+  azimuthToCompass,
+  isValidLatLng,
+  isValidTimeZone,
+} from '@/utils/sunlight';
+
+const COMMON_TIMEZONES = [
+  'Asia/Shanghai',
+  'Asia/Hong_Kong',
+  'Asia/Taipei',
+  'Asia/Tokyo',
+  'Asia/Seoul',
+  'Asia/Singapore',
+  'Asia/Bangkok',
+  'Asia/Kolkata',
+  'Asia/Dubai',
+  'Europe/London',
+  'Europe/Paris',
+  'Europe/Berlin',
+  'Europe/Moscow',
+  'Europe/Oslo',
+  'America/New_York',
+  'America/Chicago',
+  'America/Denver',
+  'America/Los_Angeles',
+  'America/Anchorage',
+  'America/Sao_Paulo',
+  'Australia/Sydney',
+  'Pacific/Auckland',
+  'UTC',
+];
+
+/** 八方位快捷方位角 */
+const DIRECTION_PRESETS = [
+  { label: '北', azimuth: 0 },
+  { label: '东北', azimuth: 45 },
+  { label: '东', azimuth: 90 },
+  { label: '东南', azimuth: 135 },
+  { label: '南', azimuth: 180 },
+  { label: '西南', azimuth: 225 },
+  { label: '西', azimuth: 270 },
+  { label: '西北', azimuth: 315 },
+];
 
 export default function AddEditPage() {
   const { id } = useParams<{ id: string }>();
@@ -45,6 +92,7 @@ export default function AddEditPage() {
     location: '',
     lat: 31.23,
     lng: 121.47,
+    timezone: DEFAULT_TIMEZONE,
     material: 'wood' as MaterialType,
     orientation: 'south' as OrientationType,
     hasBackrest: true,
@@ -56,6 +104,7 @@ export default function AddEditPage() {
   });
 
   const [experiences, setExperiences] = useState<BenchExperience[]>([]);
+  const [obstructions, setObstructions] = useState<Obstruction[]>([]);
 
   useEffect(() => {
     if (!initialized) {
@@ -70,6 +119,7 @@ export default function AddEditPage() {
         location: existingBench.location,
         lat: existingBench.lat,
         lng: existingBench.lng,
+        timezone: existingBench.timezone || DEFAULT_TIMEZONE,
         material: existingBench.material,
         orientation: existingBench.orientation,
         hasBackrest: existingBench.hasBackrest,
@@ -80,6 +130,7 @@ export default function AddEditPage() {
         review: existingBench.review,
       });
       setExperiences(existingBench.experiences || []);
+      setObstructions(existingBench.obstructions || []);
     }
   }, [isEdit, existingBench, initialized]);
 
@@ -113,6 +164,32 @@ export default function AddEditPage() {
     }
   };
 
+  const handleAddObstruction = (azimuth = 0) => {
+    setObstructions([
+      ...obstructions,
+      { id: generateId(), azimuth, heightAngle: 10, note: '' },
+    ]);
+  };
+
+  const handleUpdateObstruction = (
+    obsId: string,
+    field: 'azimuth' | 'heightAngle' | 'note',
+    value: string | number
+  ) => {
+    setObstructions(
+      obstructions.map((obs) =>
+        obs.id === obsId ? { ...obs, [field]: value } : obs
+      )
+    );
+  };
+
+  const handleDeleteObstruction = (obsId: string) => {
+    setObstructions(obstructions.filter((obs) => obs.id !== obsId));
+  };
+
+  const latLngValid = isValidLatLng(formData.lat, formData.lng);
+  const timezoneValid = isValidTimeZone(formData.timezone);
+
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     
@@ -126,7 +203,7 @@ export default function AddEditPage() {
     }
 
     if (isEdit && id) {
-      updateBench(id, formData);
+      updateBench(id, { ...formData, obstructions });
       experiences.forEach((exp) => {
         const existingExp = existingBench?.experiences.find((e) => e.id === exp.id);
         if (existingExp) {
@@ -138,6 +215,7 @@ export default function AddEditPage() {
     } else {
       addBench({
         ...formData,
+        obstructions,
       });
     }
 
@@ -226,7 +304,147 @@ export default function AddEditPage() {
                   />
                 </div>
               </div>
+
+              {!latLngValid && (
+                <p className="text-sm text-red-500 flex items-center gap-1.5">
+                  <AlertTriangle className="w-4 h-4" />
+                  经纬度非法（纬度需在 -90~90，经度需在 -180~180），保存后日照推演将给出非法结论
+                </p>
+              )}
+
+              <div>
+                <label className="block text-sm font-medium text-deep-brown mb-1.5">
+                  时区（IANA 名称）
+                </label>
+                <input
+                  type="text"
+                  list="timezone-options"
+                  value={formData.timezone}
+                  onChange={(e) => handleChange('timezone', e.target.value)}
+                  placeholder="例如：Asia/Shanghai"
+                  className="w-full px-4 py-2.5 bg-white/50 border border-deep-brown/10 rounded-lg text-deep-brown placeholder:text-ink-light/60 focus:bg-white transition-colors"
+                />
+                <datalist id="timezone-options">
+                  {COMMON_TIMEZONES.map((tz) => (
+                    <option key={tz} value={tz} />
+                  ))}
+                </datalist>
+                {!timezoneValid && (
+                  <p className="mt-1.5 text-sm text-red-500 flex items-center gap-1.5">
+                    <AlertTriangle className="w-4 h-4" />
+                    时区无法识别，保存后日照推演将给出非法结论
+                  </p>
+                )}
+              </div>
             </div>
+          </div>
+
+          <div className="paper-texture rounded-xl shadow-paper p-6 fade-in opacity-0 stagger-2">
+            <div className="flex items-center justify-between mb-2">
+              <h2 className="font-serif text-lg font-semibold text-deep-brown flex items-center gap-2">
+                <Mountain className="w-5 h-5 text-ochre" />
+                周边遮挡
+              </h2>
+              <button
+                type="button"
+                onClick={() => handleAddObstruction()}
+                className="flex items-center gap-1.5 px-3 py-1.5 text-sm text-moss-green hover:bg-moss-green/10 rounded-lg transition-colors"
+              >
+                <Plus className="w-4 h-4" />
+                添加遮挡
+              </button>
+            </div>
+            <p className="text-xs text-ink-light mb-4">
+              按方位记录遮挡物的高度角，日照推演时太阳高度角需越过该角度才算见光；留空表示四周无遮挡。
+            </p>
+
+            <div className="flex flex-wrap gap-1.5 mb-4">
+              {DIRECTION_PRESETS.map((preset) => (
+                <button
+                  key={preset.label}
+                  type="button"
+                  onClick={() => handleAddObstruction(preset.azimuth)}
+                  className="px-2.5 py-1 text-xs text-ink-light bg-warm-cream/70 hover:bg-warm-cream rounded-md transition-colors"
+                >
+                  + {preset.label} {preset.azimuth}°
+                </button>
+              ))}
+            </div>
+
+            {obstructions.length > 0 ? (
+              <div className="space-y-3">
+                {obstructions.map((obs) => (
+                  <div
+                    key={obs.id}
+                    className="p-3 bg-warm-cream/50 rounded-lg flex flex-wrap items-center gap-3"
+                  >
+                    <div className="flex items-center gap-2">
+                      <label className="text-xs text-ink-light whitespace-nowrap">方位角</label>
+                      <input
+                        type="number"
+                        min={0}
+                        max={360}
+                        step={1}
+                        value={obs.azimuth}
+                        onChange={(e) =>
+                          handleUpdateObstruction(
+                            obs.id,
+                            'azimuth',
+                            parseFloat(e.target.value) || 0
+                          )
+                        }
+                        className="w-20 px-2 py-1.5 text-sm bg-white border border-deep-brown/10 rounded-md text-deep-brown"
+                      />
+                      <span className="text-xs text-ochre w-8">
+                        {azimuthToCompass(obs.azimuth)}
+                      </span>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <label className="text-xs text-ink-light whitespace-nowrap">高度角</label>
+                      <input
+                        type="number"
+                        min={0}
+                        max={90}
+                        step={1}
+                        value={obs.heightAngle}
+                        onChange={(e) =>
+                          handleUpdateObstruction(
+                            obs.id,
+                            'heightAngle',
+                            parseFloat(e.target.value) || 0
+                          )
+                        }
+                        className="w-20 px-2 py-1.5 text-sm bg-white border border-deep-brown/10 rounded-md text-deep-brown"
+                      />
+                      <span className="text-xs text-ink-light">°</span>
+                    </div>
+                    <input
+                      type="text"
+                      value={obs.note}
+                      onChange={(e) =>
+                        handleUpdateObstruction(obs.id, 'note', e.target.value)
+                      }
+                      placeholder="备注，如：东侧高楼"
+                      className="flex-1 min-w-[140px] px-2 py-1.5 text-sm bg-white border border-deep-brown/10 rounded-md text-deep-brown placeholder:text-ink-light/60"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => handleDeleteObstruction(obs.id)}
+                      className="p-1.5 text-red-400 hover:text-red-500 hover:bg-red-50 rounded-md transition-colors"
+                    >
+                      <Trash2 className="w-4 h-4" />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div className="text-center py-6">
+                <p className="text-sm text-ink-light">暂无遮挡记录</p>
+                <p className="text-xs text-ink-light/60 mt-1">
+                  遮挡表为空时，推演按四周无遮挡计算
+                </p>
+              </div>
+            )}
           </div>
 
           <div className="paper-texture rounded-xl shadow-paper p-6 fade-in opacity-0 stagger-2">
@@ -399,7 +617,7 @@ export default function AddEditPage() {
 
             {experiences.length > 0 ? (
               <div className="space-y-4">
-                {experiences.map((exp, index) => {
+                {experiences.map((exp) => {
                   const TimeIcon = timePeriodIcons[exp.timePeriod];
                   return (
                     <div

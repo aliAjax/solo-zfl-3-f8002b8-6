@@ -14,6 +14,8 @@ import {
   Sunset,
   Moon,
   CloudSun,
+  Mountain,
+  AlertTriangle,
 } from 'lucide-react';
 import { useBenchStore } from '@/store/useBenchStore';
 import {
@@ -23,10 +25,17 @@ import {
   NOISE_LABELS,
   STAY_DURATION_LABELS,
   TIME_PERIOD_LABELS,
+  SUNLIGHT_STATUS_LABELS,
+  SUNLIGHT_PERIOD_LABELS,
 } from '@/types';
 import type { TimePeriodType } from '@/types';
 import Rating from '@/components/Rating/Rating';
 import { calculateComfortScore, getComfortLevel, getComfortColor } from '@/utils/comfort';
+import {
+  azimuthToCompass,
+  formatMinutes,
+  isSimulationValid,
+} from '@/utils/sunlight';
 
 export default function BenchDetail() {
   const { id } = useParams<{ id: string }>();
@@ -74,6 +83,14 @@ export default function BenchDetail() {
     const order: TimePeriodType[] = ['morning', 'noon', 'afternoon', 'evening', 'night'];
     return order.indexOf(a.timePeriod) - order.indexOf(b.timePeriod);
   });
+
+  // 日照推演结果：最新日期在前，并标注资料变动后失效的旧结果
+  const sortedSimulations = [...bench.sunlightSimulations].sort((a, b) =>
+    b.date.localeCompare(a.date)
+  );
+  const sortedObstructions = [...bench.obstructions].sort(
+    (a, b) => a.azimuth - b.azimuth
+  );
 
   const handleDelete = () => {
     if (id) {
@@ -260,10 +277,146 @@ export default function BenchDetail() {
           </div>
 
           <div className="paper-texture rounded-xl shadow-paper p-6 fade-in opacity-0 stagger-3">
+            <div className="flex items-center justify-between mb-4">
+              <h2 className="font-serif text-lg font-semibold text-deep-brown flex items-center gap-2">
+                <Sun className="w-5 h-5 text-ochre" />
+                日照推演
+              </h2>
+              <button
+                onClick={() => navigate('/sunlight')}
+                className="text-sm text-moss-green hover:bg-moss-green/10 px-2.5 py-1 rounded-lg transition-colors"
+              >
+                去推演
+              </button>
+            </div>
+
+            {/* 遮挡表 */}
+            <div className="mb-4">
+              <div className="flex items-center gap-1.5 text-sm text-ink-light mb-2">
+                <Mountain className="w-4 h-4" />
+                周边遮挡（{sortedObstructions.length} 条）
+              </div>
+              {sortedObstructions.length > 0 ? (
+                <div className="flex flex-wrap gap-1.5">
+                  {sortedObstructions.map((obs) => (
+                    <span
+                      key={obs.id}
+                      title={obs.note || undefined}
+                      className="px-2 py-0.5 bg-warm-cream/70 rounded text-xs text-ink-light"
+                    >
+                      {azimuthToCompass(obs.azimuth)} {obs.azimuth}° · 高 {obs.heightAngle}°
+                      {obs.note ? `（${obs.note}）` : ''}
+                    </span>
+                  ))}
+                </div>
+              ) : (
+                <p className="text-xs text-ink-light/60">
+                  遮挡表为空，推演按四周无遮挡计算
+                </p>
+              )}
+            </div>
+
+            {/* 推演结果 */}
+            {sortedSimulations.length > 0 ? (
+              <div className="space-y-3">
+                {sortedSimulations.map((sim) => {
+                  const valid = isSimulationValid(bench, sim);
+                  return (
+                    <div
+                      key={sim.id}
+                      className={`p-4 rounded-lg ${
+                        valid ? 'bg-warm-cream/50' : 'bg-deep-brown/5'
+                      }`}
+                    >
+                      <div className="flex items-center justify-between mb-2">
+                        <span className="font-medium text-deep-brown text-sm">
+                          {sim.date}
+                        </span>
+                        <div className="flex items-center gap-1.5">
+                          <span className="px-2 py-0.5 rounded-full text-xs font-medium bg-ochre/10 text-ochre">
+                            {SUNLIGHT_STATUS_LABELS[sim.status]}
+                          </span>
+                          {!valid && (
+                            <span className="flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-red-500/10 text-red-500">
+                              <AlertTriangle className="w-3 h-3" />
+                              已失效
+                            </span>
+                          )}
+                        </div>
+                      </div>
+
+                      <p className="text-sm text-ink-light mb-2">{sim.conclusion}</p>
+
+                      <div className="grid grid-cols-4 gap-2 text-center">
+                        <div className="p-1.5 bg-white/60 rounded">
+                          <div className="text-xs text-ink-light">全天</div>
+                          <div className="text-sm font-medium text-deep-brown">
+                            {formatMinutes(sim.totalSunlitMinutes)}
+                          </div>
+                        </div>
+                        {(Object.keys(SUNLIGHT_PERIOD_LABELS) as Array<keyof typeof SUNLIGHT_PERIOD_LABELS>).map((key) => (
+                          <div key={key} className="p-1.5 bg-white/60 rounded">
+                            <div className="text-xs text-ink-light">
+                              {SUNLIGHT_PERIOD_LABELS[key]}
+                            </div>
+                            <div className="text-sm font-medium text-deep-brown">
+                              {formatMinutes(sim.periods[key])}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+
+                      {sim.sunrise && sim.sunset && (
+                        <div className="flex items-center gap-4 mt-2 text-xs text-ink-light">
+                          <span className="flex items-center gap-1">
+                            <Sunrise className="w-3.5 h-3.5 text-ochre" />
+                            {sim.sunrise}
+                          </span>
+                          <span className="flex items-center gap-1">
+                            <Sunset className="w-3.5 h-3.5 text-ochre" />
+                            {sim.sunset}
+                          </span>
+                          <span>最大高度角 {sim.maxSunElevation.toFixed(1)}°</span>
+                        </div>
+                      )}
+
+                      {!valid && (
+                        <p className="mt-2 text-xs text-red-500">
+                          长椅资料在推演后发生变动，该结果已失效，请重新推演。
+                        </p>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            ) : (
+              <div className="text-center py-6">
+                <div className="w-12 h-12 rounded-full bg-ochre/10 flex items-center justify-center mx-auto mb-3">
+                  <Sun className="w-6 h-6 text-ochre/50" />
+                </div>
+                <p className="text-sm text-ink-light">还没有日照推演结果</p>
+                <p className="text-xs text-ink-light/60 mt-1">
+                  到「日照」页选择日期后批量推演
+                </p>
+              </div>
+            )}
+          </div>
+
+          <div className="paper-texture rounded-xl shadow-paper p-6 fade-in opacity-0 stagger-4">
             <h3 className="font-serif text-sm font-semibold text-deep-brown mb-3">
               档案信息
             </h3>
             <div className="space-y-2 text-sm">
+              <div className="flex justify-between">
+                <span className="text-ink-light">坐标</span>
+                <span className="text-deep-brown">
+                  {bench.lat.toFixed(4)}, {bench.lng.toFixed(4)}
+                </span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-ink-light">时区</span>
+                <span className="text-deep-brown">{bench.timezone}</span>
+              </div>
               <div className="flex justify-between">
                 <span className="text-ink-light">创建时间</span>
                 <span className="text-deep-brown">
